@@ -97,7 +97,7 @@ for i, img in tqdm(enumerate(target_images.cpu().numpy())):
     rgb_img.save(f"./output/image_{i:06d}.png")
 
 # save pose information for dataset
-pose = torch.stack([elev, azim, torch.ones(num_samples) * cam_dist]).cpu().numpy()
+pose = torch.stack([elev, azim, torch.ones(num_samples) * cam_dist]).cpu().numpy().T
 np.save("./output/pose.npy", pose)
 
 # generate train-test split for dataset
@@ -108,5 +108,5 @@ np.save("./output/train_indices.npy", train_idx)
 np.save("./output/test_indices.npy", test_idx)
 
 # DEBUG: show scene rendering for debugging
-scene = plot_scene({"figure": {"Mesh": mesh, "Camera": cameras}})
-scene.show()
+# scene = plot_scene({"figure": {"Mesh": mesh, "Camera": cameras}})
+# scene.show()
