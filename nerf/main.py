@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
 import imageio
+import wandb
 
 from keypoints import KeyPoints
 from omegaconf import DictConfig
@@ -231,6 +232,9 @@ def train_nerf(
     # Create model
     model, optimizer, lr_scheduler, start_epoch, checkpoint_path = create_model(cfg)
 
+    if cfg.logging.use_wandb:
+        wandb.watch(model, log_freq=1000)
+
     # Load the training/validation data.
     train_dataset, val_dataset, _ = get_nerf_datasets(
         dataset_name=cfg.data.dataset_name,
@@ -279,6 +283,7 @@ def train_nerf(
             recon_loss = criterion(out['feature'].view(rgb_gt.shape), rgb_gt)
 
             keypoints_loss = 0.
+            keypoints_acc = 0.
 
             if cfg.train_keypoints:
                 pred_keypoints = out['keypoints']
@@ -288,13 +293,18 @@ def train_nerf(
                                                                image.size(2),
                                                                1),
                                            xy_grid)
-
-                # print('main', 'label_keypoints', label_keypoints.shape)
-
+                
+                # (1024, C), (1024)
                 keypoints_loss = keypoints_crit(pred_keypoints,
                                                 label_keypoints.view(-1).long())
+                pred_labels = torch.argmax(torch.softmax(pred_keypoints, dim=-1),
+                                           dim=-1)
+                pred_labels = pred_labels[pred_labels != KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
+                label_keypoints = label_keypoints.view(-1)[label_keypoints.view(-1) != KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
+                keypoints_acc = torch.sum(pred_labels == label_keypoints) / \
+                    pred_labels.size(0)
 
-            loss = recon_loss + 5 * keypoints_loss
+            loss = recon_loss + 10 * keypoints_loss
 
             # Take the training step.
             optimizer.zero_grad()
@@ -304,8 +314,18 @@ def train_nerf(
             t_range.set_description(f'Epoch: {epoch:04d}, ' +
                                     f'Loss: {loss:.06f}, ' +
                                     f'Recon Loss: {recon_loss:.06f}, ' +
-                                    f'Keypoints Loss: {keypoints_loss:.06f}')
+                                    f'Keypoints Loss: {keypoints_loss:.06f}'
+                                    f'Keypoints Acc: {keypoints_acc:.06f}')
             t_range.refresh()
+
+            if cfg.logging.use_wandb:
+                wandb.log({'train/step': epoch * len(train_dataloader) + iteration})
+                wandb.log({'train/recon_loss': recon_loss.item()})
+                wandb.log({'train/LR': optimizer.param_groups[0]['lr']})
+
+                if cfg.train_keypoints:
+                    wandb.log({'train/keypoint_loss': keypoints_loss.item()})
+                    wandb.log({'train/keypoint_acc': keypoints_acc.item()})
 
             del ray_bundle
             del out
@@ -315,9 +335,8 @@ def train_nerf(
 
         # Checkpoint.
         if (
-            epoch % cfg.training.checkpoint_interval == 0
+            (epoch + 1) % cfg.training.checkpoint_interval == 0
             and len(cfg.training.checkpoint_path) > 0
-            and epoch > 0
         ):
             print(f"Storing checkpoint {checkpoint_path}.")
 
@@ -330,10 +349,7 @@ def train_nerf(
             torch.save(data_to_store, checkpoint_path)
 
         # Render
-        if (
-            epoch % cfg.training.render_interval == 0
-            and epoch > 0
-        ):
+        if (epoch + 1) % cfg.training.render_interval == 0:
             with torch.no_grad():
                 test_images = render_images(
                     model, 
@@ -343,9 +359,11 @@ def train_nerf(
                                             focal_length=2.0),
                     cfg.data.image_size,
                     file_prefix='nerf',
-                    train_keypoints=cfg.train_keypoints
+                    train_keypoints=cfg.train_keypoints,
+                    log_wandb=(cfg.logging.use_wandb and (epoch + 1) % \
+                        cfg.logging.render_interval)
                 )
-                imageio.mimsave(f'results/exp3/nerf_{epoch}.gif',
+                imageio.mimsave(f'results/exp4/nerf_{epoch}.gif',
                                 [np.uint8(im * 255) for im in test_images])
 
 
@@ -353,6 +371,11 @@ def train_nerf(
 def main(cfg: DictConfig):
 
     os.chdir(hydra.utils.get_original_cwd())
+
+    if cfg.logging.use_wandb:
+        wandb.init(project='16889-project-kpnerf')
+        wandb.define_metric("train/step")
+        wandb.define_metric("train/*", step_metric="train/step")
 
     train_nerf(cfg)
 
