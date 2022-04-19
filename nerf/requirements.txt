@@ -1,0 +1,13 @@
+fvcore
+iopath
+hydra-core
+Pillow
+plotly
+requests
+requests
+imageio
+matplotlib
+numpy
+PyMCubes
+tqdm
+visdom
