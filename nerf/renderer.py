@@ -2,59 +2,34 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import List, Optional, Tuple
-from pytorch3d.renderer.cameras import CamerasBase
-
-
 # Volume renderer which integrates color and density along rays
 # according to the equations defined in [Mildenhall et al. 2020]
 class VolumeRenderer(torch.nn.Module):
     def __init__(
         self,
-        cfg
+        cfg,
+        train_keypoints=False
     ):
         super().__init__()
 
         self._chunk_size = cfg.chunk_size
         self._white_background = cfg.white_background if 'white_background' in cfg else False
+        self.train_keypoints = train_keypoints
 
     def _compute_weights(
         self,
         deltas,
         rays_density: torch.Tensor,
-        eps: float = 1e-7,
-        clamp_fn=F.relu
+        eps: float = 1e-10,
     ):
-        # TODO (1.5): Compute transmittance using the equation described in the README
-        # Deltas - (N, d, 1)
-
-        N, d = deltas.size(0), deltas.size(1)
-
-        # T = []
-        # T_prev = torch.ones((N, 1)).cuda()
-
-        # T.append(T_prev)
-
-        # for i in range(0, d - 1):
-
-        #     T_curr = T_prev * torch.exp(- clamp_fn(rays_density[:, i]) * deltas[:, i] + eps)
-        #     T_prev = T_curr
-
-        #     T.append(T_curr)
-
-        # T = torch.stack(T, dim=1)
-
-        # TODO (1.5): Compute weight used for rendering from transmittance and density
-        # weights = T * (1. - torch.exp(- rays_density * deltas + eps))
 
         raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
         alpha = raw2alpha(rays_density, deltas).squeeze(-1)  # [N_rays, N_samples]
 
-        # print(alpha.shape)
-
-        weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1.-alpha + 1e-10], -1), -1)[:, :-1]
-
-        # print(weights.shape)
+        weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)).cuda(),
+                                                   1. -alpha + eps],
+                                                  -1),
+                                        -1)[:, :-1]
 
         return weights.unsqueeze(-1)
 
@@ -109,22 +84,22 @@ class VolumeRenderer(torch.nn.Module):
                 density.view(-1, n_pts, 1)
             )
 
-            # print('weights', weights.min(), weights.max())
-
             # TODO (1.5): Render (color) features using weights
             feature = self._aggregate(weights, feature)
 
             # TODO (1.5): Render depth map
             depth = self._aggregate(weights, depth_values)
 
-            # print(depth.shape)
-            # print(feature.shape)
-
             # Return
             cur_out = {
                 'feature': feature,
                 'depth': depth,
             }
+
+            if self.train_keypoints:
+                keypoints = self._aggregate(weights,
+                                            implicit_output['keypoints'])
+                cur_out['keypoints'] = keypoints
 
             chunk_outputs.append(cur_out)
 

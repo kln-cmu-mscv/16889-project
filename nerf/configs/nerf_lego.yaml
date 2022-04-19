@@ -5,6 +5,7 @@ type: train_nerf
 part: 4.1
 
 train_keypoints: True
+use_wandb: True
 
 training:
   num_epochs: 500
@@ -14,7 +15,7 @@ training:
   lr_scheduler_step_size: 50
   lr_scheduler_gamma: 0.8
 
-  checkpoint_path: checkpoint_nerf_highres_view
+  checkpoint_path: results/exp3/checkpoint_nerf_highres_view
   checkpoint_interval: 50
   resume: True
 

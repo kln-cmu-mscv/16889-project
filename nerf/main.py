@@ -4,9 +4,12 @@ import warnings
 import hydra
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import tqdm
 import imageio
 
+from keypoints import KeyPoints
 from omegaconf import DictConfig
 from PIL import Image
 from pytorch3d.renderer import (
@@ -20,6 +23,7 @@ from sampler import sampler_dict
 from renderer import renderer_dict
 from ray_utils import (
     sample_images_at_xy,
+    sample_keypoints_at_xy,
     get_pixels_from_image,
     get_random_pixels_from_image,
     get_rays_from_pixels
@@ -51,9 +55,12 @@ class Model(torch.nn.Module):
     ):
         super().__init__()
 
+        self.train_keypoints = cfg.train_keypoints
+
         # Get implicit function from config
         self.implicit_fn = volume_dict[cfg.implicit_function.type](
-            cfg.implicit_function
+            cfg.implicit_function,
+            self.train_keypoints
         )
 
         # Point sampling (raymarching) scheme
@@ -63,7 +70,8 @@ class Model(torch.nn.Module):
 
         # Initialize volume renderer
         self.renderer = renderer_dict[cfg.renderer.type](
-            cfg.renderer
+            cfg.renderer,
+            self.train_keypoints
         )
 
     def forward(
@@ -85,7 +93,8 @@ def render_images(
     cameras,
     image_size,
     save=False,
-    file_prefix=''
+    file_prefix='',
+    train_keypoints=False
 ):
     all_images = []
     device = list(model.parameters())[0].device
@@ -97,27 +106,22 @@ def render_images(
         camera = camera.to(device)
         xy_grid = get_pixels_from_image(image_size, camera) # TODO (1.3): implement in ray_utils.py
         ray_bundle = get_rays_from_pixels(xy_grid, image_size, camera) # TODO (1.3): implement in ray_utils.py
-
-        # TODO (1.3): Visualize xy grid using vis_grid
-        if cam_idx == 0 and file_prefix == '':
-            image = vis_grid(xy_grid, image_size)
-            # plt.imshow(image)
-            plt.imsave('results/grid1.png', image)
-
-        # TODO (1.3): Visualize rays using vis_rays
-        if cam_idx == 0 and file_prefix == '':
-            image = vis_rays(ray_bundle, image_size)
-            plt.imsave('results/ray1.png', image)
-
-        # TODO (1.4): Implement point sampling along rays in sampler.py
         ray_bundle = model.sampler(ray_bundle)
 
-        # TODO (1.4): Visualize sample points as point cloud
-        if cam_idx == 0 and file_prefix == '':
-            render_points('results/points1.png', ray_bundle.sample_points)
-
-        # TODO (1.5): Implement rendering in renderer.py
         out = model(ray_bundle)
+
+        if train_keypoints:
+            keypoints = torch.argmax(F.softmax(out['keypoints'].view(image_size[1],
+                                                                     image_size[0],
+                                                                     -1),
+                                               dim=-1),
+                                     dim=-1).detach().cpu().numpy()
+            ignore_label = KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']
+            keypoints = np.argwhere(keypoints != ignore_label)
+
+            # keypoints_x = keypoints[:, 1]
+            # keypoints_y = keypoints[:, 0]
+            # keypoints_colors =
 
         # Return rendered features (colors)
         image = np.array(
@@ -125,6 +129,33 @@ def render_images(
                 image_size[1], image_size[0], 3
             ).detach().cpu()
         )
+
+        if train_keypoints:
+
+            neighbors = [(-1, 0),
+                        (-1, 0),
+                        (-1, 1),
+                        (0, -1),
+                        (0, 1),
+                        (1, -1),
+                        (1, 0),
+                        (1, 1)]
+
+            for i in range(keypoints.shape[0]):
+                # For now same colors.
+                image[keypoints[i][0], keypoints[i][1]] = np.array([0.22352941,
+                                                                    1.,
+                                                                    0.07843137])
+                for dx, dy in neighbors:
+
+                    if int(keypoints[i][0] + dy) >= image_size[1] or \
+                       int(keypoints[i][1] + dx) >= image_size[0]:
+                        continue
+
+                    image[keypoints[i][0] + dy, keypoints[i][1] + dx] = np.array([0.22352941,
+                                                                                  1.,
+                                                                                  0.07843137])
+
         all_images.append(image)
 
         # TODO (1.5): Visualize depth
@@ -204,6 +235,7 @@ def train_nerf(
     train_dataset, val_dataset, _ = get_nerf_datasets(
         dataset_name=cfg.data.dataset_name,
         image_size=[cfg.data.image_size[1], cfg.data.image_size[0]],
+        train_keypoints = cfg.train_keypoints
     )
 
     train_dataloader = torch.utils.data.DataLoader(
@@ -215,6 +247,12 @@ def train_nerf(
     )
 
     criterion = torch.nn.MSELoss()
+
+    if cfg.train_keypoints:
+        weights = torch.ones(cfg.implicit_function.n_keypoints).cuda()
+        weights[KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']] /= cfg.implicit_function.n_keypoints
+        keypoints_crit = torch.nn.CrossEntropyLoss(weight=weights)
+        # keypoints_crit = torch.nn.CrossEntropyLoss()
 
     # Run the main training loop.
     for epoch in range(start_epoch, cfg.training.num_epochs):
@@ -233,19 +271,40 @@ def train_nerf(
                 xy_grid, cfg.data.image_size, camera
             )
 
-            rgb_gt = sample_images_at_xy(image, xy_grid)
+            rgb_gt = sample_images_at_xy(image[..., :3], xy_grid)
 
             # Run model forward
             out = model(ray_bundle.to(torch.device('cuda')))
 
-            loss = criterion(out['feature'].view(rgb_gt.shape), rgb_gt)
+            recon_loss = criterion(out['feature'].view(rgb_gt.shape), rgb_gt)
+
+            keypoints_loss = 0.
+
+            if cfg.train_keypoints:
+                pred_keypoints = out['keypoints']
+                label_keypoints = \
+                    sample_keypoints_at_xy(image[..., -1].view(-1,
+                                                               image.size(1),
+                                                               image.size(2),
+                                                               1),
+                                           xy_grid)
+
+                # print('main', 'label_keypoints', label_keypoints.shape)
+
+                keypoints_loss = keypoints_crit(pred_keypoints,
+                                                label_keypoints.view(-1).long())
+
+            loss = recon_loss + 5 * keypoints_loss
 
             # Take the training step.
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            t_range.set_description(f'Epoch: {epoch:04d}, Loss: {loss:.06f}')
+            t_range.set_description(f'Epoch: {epoch:04d}, ' +
+                                    f'Loss: {loss:.06f}, ' +
+                                    f'Recon Loss: {recon_loss:.06f}, ' +
+                                    f'Keypoints Loss: {keypoints_loss:.06f}')
             t_range.refresh()
 
             del ray_bundle
@@ -277,20 +336,26 @@ def train_nerf(
         ):
             with torch.no_grad():
                 test_images = render_images(
-                    model, create_surround_cameras(4.0,
-                                                   n_poses=20,
-                                                   up=(0.0, 0.0, 1.0),
-                                                   focal_length=2.0),
-                    cfg.data.image_size, file_prefix='nerf'
+                    model, 
+                    create_surround_cameras(4.0,
+                                            n_poses=20,
+                                            up=(0.0, 0.0, 1.0),
+                                            focal_length=2.0),
+                    cfg.data.image_size,
+                    file_prefix='nerf',
+                    train_keypoints=cfg.train_keypoints
                 )
-                imageio.mimsave(f'results/nerf_{epoch}.gif',
+                imageio.mimsave(f'results/exp3/nerf_{epoch}.gif',
                                 [np.uint8(im * 255) for im in test_images])
 
 
 @hydra.main(config_path='./configs', config_name='nerf_lego')
 def main(cfg: DictConfig):
+
     os.chdir(hydra.utils.get_original_cwd())
+
     train_nerf(cfg)
 
 if __name__ == "__main__":
     main()
+

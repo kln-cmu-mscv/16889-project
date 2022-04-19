@@ -91,6 +91,22 @@ def sample_images_at_xy(
 
     return images_sampled.permute(0, 2, 3, 1).view(-1, images.shape[-1])
 
+def sample_keypoints_at_xy(
+    keypoint_channel: torch.Tensor,
+    xy_grid: torch.Tensor,
+):
+    batch_size = keypoint_channel.shape[0]
+
+    xy_grid = -xy_grid.view(batch_size, -1, 1, 2)
+
+    keypoints_sampled = torch.nn.functional.grid_sample(
+        keypoint_channel.permute(0, 3, 1, 2),
+        xy_grid,
+        align_corners=True,
+        mode="bilinear",
+    )
+
+    return keypoints_sampled.permute(0, 2, 3, 1).view(-1, 1)
 
 # Generate pixel coordinates in NDC space ([-1, 1])
 def get_pixels_from_image(image_size, camera):

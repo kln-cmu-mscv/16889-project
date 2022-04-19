@@ -5,10 +5,7 @@ import torch
 from ray_utils import RayBundle
 from pytorch3d.renderer.cameras import CamerasBase
 
-from render_functions import (
-    get_device,
-    render_points
-)
+from render_functions import get_device
 
 # Sampler which implements stratified (uniform) point sampling along rays
 class StratifiedRaysampler(torch.nn.Module):
