@@ -85,26 +85,16 @@ mesh = IO().load_mesh(ply_file, device=device)
 # centered at (0,0,0). (scale, center) will be used to bring the predicted mesh
 # to its original center and scale.  Note that normalizing the target mesh,
 # speeds up the optimization but is not necessary!
-def normalize_mesh(mesh):
-    verts = mesh.verts_packed()
-    N = verts.shape[0]
-    center = verts.mean(0)
-    scale = max((verts - center).abs().max(0)[0])
-    mesh.offset_verts_(-center)
-    mesh.scale_verts_((1.0 / float(scale)))
-    return mesh
-
-
-# mesh = normalize_mesh(mesh)
-
-
-def normalize_kpts(kpts_xyz):
-    N = kpts_xyz.shape[0]
-    center = kpts_xyz.mean(0)
-    scale = max((kpts_xyz - center).abs().max(0)[0])
-    kpts_xyz = kpts_xyz - center
-    kpts_xyz = kpts_xyz * (1.0 / float(scale))
-    return kpts_xyz
+verts = mesh.verts_packed()
+N = verts.shape[0]
+center = verts.mean(0)
+scale = max((verts - center).abs().max(0)[0])
+mesh.offset_verts_(-center)
+mesh.scale_verts_((1.0 / float(scale)))
+# nomalize keypoints also
+scale = max((kpts_xyz - center).abs().max(0)[0])
+kpts_xyz = kpts_xyz - center
+kpts_xyz = kpts_xyz * (1.0 / float(scale))
 
 
 # kpts_xyz = normalize_kpts(kpts_xyz)
