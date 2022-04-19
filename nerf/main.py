@@ -293,16 +293,22 @@ def train_nerf(
                                                                image.size(2),
                                                                1),
                                            xy_grid)
-                
-                # (1024, C), (1024)
+
                 keypoints_loss = keypoints_crit(pred_keypoints,
                                                 label_keypoints.view(-1).long())
                 pred_labels = torch.argmax(torch.softmax(pred_keypoints, dim=-1),
                                            dim=-1)
-                pred_labels = pred_labels[pred_labels != KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
-                label_keypoints = label_keypoints.view(-1)[label_keypoints.view(-1) != KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
-                keypoints_acc = torch.sum(pred_labels == label_keypoints) / \
-                    pred_labels.size(0)
+
+                pred_labels = \
+                    pred_labels[label_keypoints.view(-1) != \
+                        KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
+                label_keypoints = \
+                    label_keypoints.view(-1)[label_keypoints.view(-1) != \
+                        KeyPoints.KEYPOINTS_NAME_TO_I['not-keypoint']]
+
+                if label_keypoints.size(0) > 0:
+                    keypoints_acc = torch.sum(pred_labels == label_keypoints) / \
+                        pred_labels.size(0)
 
             loss = recon_loss + 10 * keypoints_loss
 
@@ -314,18 +320,19 @@ def train_nerf(
             t_range.set_description(f'Epoch: {epoch:04d}, ' +
                                     f'Loss: {loss:.06f}, ' +
                                     f'Recon Loss: {recon_loss:.06f}, ' +
-                                    f'Keypoints Loss: {keypoints_loss:.06f}'
+                                    f'Keypoints Loss: {keypoints_loss:.06f}, ' +
                                     f'Keypoints Acc: {keypoints_acc:.06f}')
             t_range.refresh()
 
             if cfg.logging.use_wandb:
                 wandb.log({'train/step': epoch * len(train_dataloader) + iteration})
                 wandb.log({'train/recon_loss': recon_loss.item()})
+                wandb.log({'train/loss': loss.item()})
                 wandb.log({'train/LR': optimizer.param_groups[0]['lr']})
 
                 if cfg.train_keypoints:
                     wandb.log({'train/keypoint_loss': keypoints_loss.item()})
-                    wandb.log({'train/keypoint_acc': keypoints_acc.item()})
+                    wandb.log({'train/keypoint_acc': keypoints_acc})
 
             del ray_bundle
             del out
@@ -352,16 +359,14 @@ def train_nerf(
         if (epoch + 1) % cfg.training.render_interval == 0:
             with torch.no_grad():
                 test_images = render_images(
-                    model, 
+                    model,
                     create_surround_cameras(4.0,
                                             n_poses=20,
                                             up=(0.0, 0.0, 1.0),
                                             focal_length=2.0),
                     cfg.data.image_size,
                     file_prefix='nerf',
-                    train_keypoints=cfg.train_keypoints,
-                    log_wandb=(cfg.logging.use_wandb and (epoch + 1) % \
-                        cfg.logging.render_interval)
+                    train_keypoints=cfg.train_keypoints
                 )
                 imageio.mimsave(f'results/exp4/nerf_{epoch}.gif',
                                 [np.uint8(im * 255) for im in test_images])
