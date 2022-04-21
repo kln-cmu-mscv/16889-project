@@ -8,7 +8,7 @@ from torchvision import models
 import matplotlib.pyplot as plt
 import wandb
 
-from network import PoseRegressor_sincos
+from network import PoseRegressorSinCos
 from utils import *
 from pose_dataset import PoseDataset
 
@@ -52,7 +52,7 @@ def main():
     
     # create model
     print("Creating Pose Regressor model")
-    model = PoseRegressor_sincos(pretrained = True)
+    model = PoseRegressorSinCos(pretrained = True)
     print(model)
 
     model = model.cuda()
@@ -61,7 +61,7 @@ def main():
     criterion_recon= nn.MSELoss()
     criterion_MAE = nn.L1Loss()
     
-    val_dataset = PoseDataset(split = 'test', data_dir = '16889_pose_dataset_chair_highres')
+    val_dataset = PoseDataset(split = 'test', data_dir = 'dataset/Dataset')
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,

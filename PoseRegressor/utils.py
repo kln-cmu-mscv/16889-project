@@ -8,7 +8,8 @@ from tqdm.auto import tqdm
 import torchvision.transforms as transforms
 from torchvision.transforms import ToPILImage 
 from pytorch3d.io import IO
-
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer.blending import BlendParams
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.renderer import (
     look_at_view_transform,
@@ -18,6 +19,8 @@ from pytorch3d.renderer import (
     MeshRasterizer,
     MeshRenderer,
     SoftPhongShader,
+    HardPhongShader,
+    TexturesVertex,
 )
 
 from PIL import Image
@@ -77,11 +80,11 @@ def render_image(theta, phi):
         device = torch.device("cpu")
 
     # setup data
-    DATA_DIR = "./data/"
-    ply_file = os.path.join(DATA_DIR, "chair.ply")
-
-    # load mesh obj
-    mesh = IO().load_mesh(ply_file, device=device)
+    DATA_DIR = "./dataset/Dataset/"
+    model_file = "03001627/8d458ab12073c371caa2c06fded3ca21"
+    obj_file = os.path.join(DATA_DIR, "ShapeNetCore.v2", model_file, "models/model_normalized.obj"
+)
+    mesh = load_objs_as_meshes([obj_file], device=device)
     # We scale normalize and center the target mesh to fit in a sphere of radius 1
     # centered at (0,0,0). (scale, center) will be used to bring the predicted mesh
     # to its original center and scale.  Note that normalizing the target mesh,
@@ -92,6 +95,12 @@ def render_image(theta, phi):
     scale = max((verts - center).abs().max(0)[0])
     mesh.offset_verts_(-center)
     mesh.scale_verts_((1.0 / float(scale)))
+    # change obj mesh textures to rainbow colors
+    verts = mesh.verts_padded()
+    faces = mesh.faces_padded()
+    texture_rgb = (verts - verts.min()) / (verts.max() - verts.min())
+    texture = TexturesVertex(texture_rgb)
+    mesh = Meshes(verts, faces, texture)
 
     image_size = 256
 
@@ -121,8 +130,13 @@ def render_image(theta, phi):
                 blur_radius=0.0,
                 faces_per_pixel=1,
             )
+            
         ),
-        shader=SoftPhongShader(device=device, lights=lights),
+        shader=HardPhongShader(device=device, 
+                               lights=lights, 
+                               cameras=cameras, 
+                               blend_params=BlendParams(background_color=(0,0,0))
+        ),
     )
 
     # Create a batch of meshes by repeating the mesh and associated textures.

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import wandb
 import numpy as np
 
-from network import PoseRegressor_sincos
+from network import PoseRegressorSinCos
 from utils import *
 from pose_dataset import PoseDataset
 
@@ -94,19 +94,18 @@ def main():
       wandb.init(project="3d-project")
     # create model
     print("Creating Pose Regressor model")
-    model = PoseRegressor_sincos(pretrained = True)
+    model = PoseRegressorSinCos(pretrained = True)
     print(model)
 
     model = model.cuda()
 
     criterion_recon= nn.MSELoss()
-    criterion_MAE = nn.MSELoss()
+    criterion_MAE = nn.L1Loss()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 
-    train_dataset = PoseDataset(split = 'train', data_dir = '16889_pose_dataset_chair_highres')
-    val_dataset = PoseDataset(split = 'test', data_dir = '16889_pose_dataset_chair_highres')
+    train_dataset = PoseDataset(split = 'train', data_dir = 'dataset/Dataset')
 
     train_sampler = None
 

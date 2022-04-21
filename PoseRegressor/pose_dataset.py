@@ -18,7 +18,7 @@ class PoseDataset(Dataset):
         self.data_dir   = data_dir
         self.size       = image_size
         self.index_list = self.get_index_list()
-        self.poses = self.get_poses()
+        self.poses      = self.get_poses()
 
     def get_poses(self):
         poses_path = os.path.join(self.data_dir, 'pose.npy')
