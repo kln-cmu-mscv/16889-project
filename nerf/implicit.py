@@ -41,9 +41,10 @@ class HarmonicEmbedding(torch.nn.Module):
         else:
             return torch.cat((embed.sin(), embed.cos()), dim=-1)
 
+# TODO (3.1): Implement NeRF MLP
 class NeuralRadianceField(torch.nn.Module):
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, train_keypoints=False):
         """
         """
         super(NeuralRadianceField, self).__init__()
@@ -54,11 +55,13 @@ class NeuralRadianceField(torch.nn.Module):
         self.input_ch_views = 3
         self.skips = cfg.append_xyz
         self.use_viewdirs = cfg.use_viewdirs
+        self.keypoints_out = (cfg.n_keypoints if train_keypoints else 0)
+        self.train_keypoints = train_keypoints
 
-        self.harmonic_embedding_xyz = HarmonicEmbedding(3,
-                                                        cfg.n_harmonic_functions_xyz)
-        self.harmonic_embedding_dir = HarmonicEmbedding(3,
-                                                        cfg.n_harmonic_functions_dir)
+        self.harmonic_embedding_xyz = \
+            HarmonicEmbedding(3, cfg.n_harmonic_functions_xyz)
+        self.harmonic_embedding_dir = \
+            HarmonicEmbedding(3, cfg.n_harmonic_functions_dir)
 
         embedding_dim_xyz = self.harmonic_embedding_xyz.output_dim
         embedding_dim_dir = self.harmonic_embedding_dir.output_dim
@@ -82,8 +85,14 @@ class NeuralRadianceField(torch.nn.Module):
             self.feature_linear = nn.Linear(self.W, self.W)
             self.alpha_linear = nn.Linear(self.W, 1)
             self.rgb_linear = nn.Linear(self.W//2, 3)
+
+            if self.train_keypoints:
+                self.keypoints_linear = nn.ModuleList([nn.Linear(self.W // 2,
+                                                                 self.W // 2), 
+                                                       nn.Linear(self.W // 2,
+                                                                 self.keypoints_out)])
         else:
-            self.output_linear = nn.Linear(self.W, 1 + 3)
+            self.output_linear = nn.Linear(self.W, 1 + 3 + self.keypoints_out)
 
     def forward(self, ray_bundle):
 
@@ -122,16 +131,30 @@ class NeuralRadianceField(torch.nn.Module):
 
             rgb = self.rgb_linear(h)
 
+            keypoints = None
+
+            if self.train_keypoints:
+
+                for i in range(len(self.keypoints_linear) - 1):
+                    h = self.keypoints_linear[i](h)
+                    h = F.relu(h)
+                    
+                keypoints = self.keypoints_linear[-1](h)
+                # print('implicit', 'predicted_kps', keypoints.shape)
+
             out = {
                 'density': alpha,
-                'feature': torch.sigmoid(rgb)
+                'feature': torch.sigmoid(rgb),
+                'keypoints': keypoints
             }
 
         else:
             outputs = self.output_linear(h)
+
             out = {
                 'density': outputs[..., 0].view(-1, 1),
-                'feature': torch.sigmoid(outputs[..., 1:])
+                'feature': torch.sigmoid(outputs[..., 1: 4]),
+                'keypoints': outputs[4:]
             }
 
         return out

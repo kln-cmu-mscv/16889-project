@@ -13,6 +13,7 @@ import torch
 from PIL import Image
 from pytorch3d.renderer import PerspectiveCameras
 from torch.utils.data import Dataset
+from keypoints import KeyPoints
 
 import matplotlib.pyplot as plt
 
@@ -59,6 +60,7 @@ def get_nerf_datasets(
     image_size: Tuple[int, int],
     data_root: str = DEFAULT_DATA_ROOT,
     autodownload: bool = True,
+    train_keypoints = False
 ) -> Tuple[Dataset, Dataset, Dataset]:
     """
     Obtains the training and validation dataset object for a dataset specified
@@ -131,6 +133,28 @@ def get_nerf_datasets(
         )
         for idx in [train_idx, val_idx, test_idx]
     ]
+
+    # Modifying training set in case of keypoints availability.
+    # Once all data is annotated, modify this to change val and test as well.
+    if train_keypoints:
+        keypoints = KeyPoints()
+
+        # images - (N, h, w, 3),
+        # train_images - {i: (h, w, 4)}
+        train_images = keypoints.add_keypoint_channel(images)
+        train_indices = train_images.keys()
+
+        print('dataset', 'image_0, label_0', train_images[0][202, 200], train_images[0][202, 201])
+
+        train_dataset = ListDataset(
+            [
+                {"image": train_images[i],
+                 "camera": cameras[i],
+                 "camera_idx": int(i)}
+
+                for i in train_indices
+            ]
+        )
 
     return train_dataset, val_dataset, test_dataset
 
